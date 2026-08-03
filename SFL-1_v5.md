@@ -2858,19 +2858,19 @@ Canonical 静态检查必须证明：
 
 # 附录 B：Gate 科学法庭十项表
 
-共同规则：主推断见 §20.2；Holm 家族见 §20.3；HOLDOUT 一次；样本/装置失败或区间落在灰区均 INCONCLUSIVE。
+主推断算法按 §20.2。下表逐行展开 Multiplicity 与 Sequential，不以共享省略替代；样本/装置失败或区间落在灰区均 INCONCLUSIVE。
 
-|Gate|Population / Sample|Estimand \(\theta_g\)|Null|MES_pass / MES_fail|Dependence|Decision / Failure state|
-|---|---|---|---|---|---|---|
-|1 发现|共同支持域内 D−1 候选题材日|未来5日 NewJoin AUC：真实−null|≤0|0.05 / 0|题材簇×月|§18.0；不足→INCONCLUSIVE|
-|2 确认|可评估确认/未确认匹配题材|Whipsaw率：控制−处理|≤0|0.10 / 0|题材簇×月|§18.0；不足→INCONCLUSIVE|
-|3 迁移|已确认 episode|\(\Delta StartRate_5\) 及 CDS 增量（共同主读数取较弱者）|≤0|0.10 / 0|题材簇×月|两读数均PASS才PASS；任一FAIL才FAIL|
-|4 时钟|已确认题材容量候选|标准化后交互项 \(\beta_3\)|≤0|0.05 / 0|题材簇×月|§18.0；不足→INCONCLUSIVE|
-|5 选择|同题材同日可交易容量股|EntryScore前2−匹配随机 NetAlpha20|≤0|1% / 0|题材簇×月|§18.0；不足→INCONCLUSIVE|
-|6 交互|2×2共同支持样本|\(\Delta_{INT}\)|≤0|1% / 0|题材簇×月|§18.0；不足→INCONCLUSIVE|
-|7 执行|有效期内实际成交信号|NetAlpha20|≤0|1% / 0|题材簇×月|§18.0；逆向选择按 §18 Gate 7；不足→INCONCLUSIVE|
-|8 退出|同一入场成交序列|动态退出−固定20日的年化Sharpe差；且净收益差非负|≤0|0.10 / 0|题材簇×月|Sharpe PASS且收益CI下界≥0才PASS|
-|S 叠加|同一入口/退出序列|叠加−无叠加的Sharpe差|≤0|0.10 / 0|月块|独立 Holm 家族|
+|Gate|Population / Sample|Estimand \(\theta_g\)|Null|MES_pass / MES_fail|Dependence|Multiplicity|Sequential|Decision / Failure state|
+|---|---|---|---|---|---|---|---|---|
+|1 发现|共同支持域内 D−1 候选题材日|未来5日 NewJoin AUC：真实−null|≤0|0.05 / 0|题材簇×月|核心8 Gate Holm FWER 5%|HOLDOUT一次；FORWARD仅Kill|§18.0；不足→INCONCLUSIVE|
+|2 确认|可评估确认/未确认匹配题材|Whipsaw率：控制−处理|≤0|0.10 / 0|题材簇×月|核心8 Gate Holm FWER 5%|HOLDOUT一次；FORWARD仅Kill|§18.0；不足→INCONCLUSIVE|
+|3 迁移|已确认 episode|\(\Delta StartRate_5\) 及 CDS 增量（共同主读数取较弱者）|≤0|0.10 / 0|题材簇×月|核心8 Gate Holm FWER 5%；两读数交并|HOLDOUT一次；FORWARD仅Kill|两读数均PASS才PASS；任一FAIL才FAIL；其余INCONCLUSIVE|
+|4 时钟|已确认题材容量候选|标准化后交互项 \(\beta_3\)|≤0|0.05 / 0|题材簇×月|核心8 Gate Holm FWER 5%|HOLDOUT一次；FORWARD仅Kill|§18.0；不足→INCONCLUSIVE|
+|5 选择|同题材同日可交易容量股|EntryScore前2−匹配随机 NetAlpha20|≤0|1% / 0|题材簇×月|核心8 Gate Holm FWER 5%|HOLDOUT一次；FORWARD仅Kill|§18.0；不足→INCONCLUSIVE|
+|6 交互|2×2共同支持样本|\(\Delta_{INT}\)|≤0|1% / 0|题材簇×月|核心8 Gate Holm FWER 5%|HOLDOUT一次；FORWARD仅Kill|§18.0；不足→INCONCLUSIVE|
+|7 执行|有效期内实际成交信号|NetAlpha20|≤0|1% / 0|题材簇×月|核心8 Gate Holm FWER 5%；逆向选择同家族|HOLDOUT一次；FORWARD仅Kill|§18.0；逆向选择按 §18 Gate 7；不足→INCONCLUSIVE|
+|8 退出|同一入场成交序列|动态退出−固定20日的年化Sharpe差；且净收益差非负|≤0|0.10 / 0|题材簇×月|核心8 Gate Holm FWER 5%；两读数交并|HOLDOUT一次；FORWARD仅Kill|Sharpe PASS且收益CI下界≥0才PASS；任一FAIL才FAIL；其余INCONCLUSIVE|
+|S 叠加|同一入口/退出序列|叠加−无叠加的Sharpe差|≤0|0.10 / 0|月块|独立 Gate S 家族 Holm FWER 5%|HOLDOUT一次；FORWARD仅Kill|按 §18.0；FAIL/INCONCLUSIVE 均不进入生产|
 
 **MES 说明：** 以上为预注册工程/经济最小效应，不是市场自然常数。修改即新版本。Gate 3/8 的共同主读数使用交并规则，禁止事后择优。所有效果量输出双侧95% CI，正式方向判定使用 Holm 调整后的单侧界。
 
@@ -2879,7 +2879,7 @@ Canonical 静态检查必须证明：
 ## 定义与实现
 - [ ] A 类阻断 = 0；B 类阻断 = 0
 - [ ] Pctl/EMA/状态/owner/账本算法唯一
-- [ ] 不存在未解析占位符
+- [ ] 不存在未解析参数
 - [ ] `params.yaml` 数字 lint 通过
 
 ## 数据与 null
