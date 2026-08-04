@@ -51,6 +51,10 @@ v8 已 CLOSED 项（簇算法、ConfirmQuality、§3.5、load-or-build、NON_EVA
 | 8 | Gate9 tape=固定20日入口政策生产 tape；InitialCapital=ΣTargetValue | §18 |
 | 9 | Kill 后两条=deterministic risk stop，不宣称 false-death；稳健性算法闭合；Gate S=端到端 overlay；partition 内 persistent cluster | §20.2、§21.7、附录B |
 
-## 四、结论
+## 四、审计残留
+
+独立复审确认 A/B 项均 CLOSED；附录 B Gate3/4/8 Dependence 列已与 §20.2.1 persistent cluster 对齐。
+
+## 五、结论
 
 18/18 指控成立。v9 为 **Final Interface Closure**，不新增交易指标/Gate。Freeze 仍取决于附录 C 物化证据。
