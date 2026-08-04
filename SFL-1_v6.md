@@ -2481,7 +2481,7 @@ FAIL：
 
 - 定义 \(\theta_{ADV}=NetAlpha20_{rejected}-NetAlpha20_{filled}\)，非劣界为1个百分点；
 - guard PASS：\(\theta_{ADV}\) 的单侧95%上界 < 0.01；
-- guard FAIL：\(\theta_{ADV}\) 的单侧95%下界 > 0.01，记 `FAIL_ADVERSE_SELECTION`；
+- guard FAIL：\(\theta_{ADV}\) 的 Bonferroni 单侧97.5%下界 > 0.01，记 `FAIL_ADVERSE_SELECTION`；
 - 其余记 `INCONCLUSIVE_ADVERSE_SELECTION`，Gate 8 整体为 INCONCLUSIVE；本 SPEC 不允许在同一 HOLDOUT 切换到“无 REJECT_GAP”后重新开庭。移除该规则必须创建新 SPEC 与新未触碰样本；
 - Gate 8 的两个共同主 estimand 为执行 NetAlpha20 与 \(-\theta_{ADV}\)，按 §18.0 IUT 合成；
 - 该对照在 VALIDATION 与 HOLDOUT 各报告一次。
@@ -2648,7 +2648,7 @@ episode 层基准为匹配伪题材容量篮子同构执行，组合层基准为
 
 三者冲突时以主装置裁决，但冲突必须标 `INFERENCE_CONFLICT` 并在首页披露；若主装置 PASS 而两项稳健性均方向相反，降级为 INCONCLUSIVE。
 
-同一题材多只股票不能当作独立样本。合并后的 episode 按单单元计。伪题材间允许 donor 复用导致基准相关，该依赖由真实题材簇聚类单元吸收，不把200个篮子当独立样本。
+同一题材多只股票不能当作独立样本。发生合并时，两个 origin episode 各自在合并日前一日右删失，并各自作为一个聚类单元；合并后运行片段排除在 episode 科学推断之外，只进入组合政策时间序列。伪题材间允许 donor 复用导致基准相关，该依赖由真实题材簇聚类单元吸收，不把200个篮子当独立样本。
 
 **Monte Carlo 精度闸门：** bootstrap/随机化检验使用不少于5,000次；若 Gate 固定顺序阈值0.05（或 Gate S Holm 阈值）两侧的 Monte Carlo 95% 二项置信区间跨越决策阈值，自动增加到50,000次；仍跨越则 INCONCLUSIVE。
 
