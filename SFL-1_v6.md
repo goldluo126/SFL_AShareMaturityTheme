@@ -110,7 +110,7 @@ R^{net}_{basket(c),\tau_{entry}:\tau_{entry}+19}
 
 **对照篮子执行语义：**
 
-1. 篮子成员 = 该伪题材（§8.3）内按 §9.1 同一资格规则构造的容量候选，构造于信号日 D；
+1. 篮子成员 = 该伪题材（§8.3）在配对确认日冻结的 \(K^E\) 中，于信号日 D 满足 §9.1 当日交易资格的 \(K^{trade}\)；
 2. 假想买入：与真实信号同一 \(\tau_{entry}\)、同一 09:35—10:00 VWAP 窗口；
 3. 机械拒绝规则逐股同构适用：停牌、09:30 开盘价等于涨停价、09:35—10:00 无成交、全部成交在涨停价且无法证明可成交（§14.2 前四条）；
 4. REJECT_GAP：对照股使用与配对真实信号**相同状态**、**对照股自身所属交易板块**的同一张阈值表（§14.2）判定；
@@ -366,11 +366,17 @@ D日前定义的题材候选集合，比同日匹配的伪题材更容易在随�
 
 **B-LEX：历史正式主模式。** 对每个公司，将截至 D−1 21:30 可用文本归一化后做字符 3–5 gram hashing：
 
-- 固定维度 \(2^{18}\)，MurmurHash3，seed=0，signed hashing；
-- 不训练词表；IDF 仅用截至 D−1 的全市场 PIT 文本 expanding window 计算；
+- 输入必须是 ETL 以冻结 `parser_version` 生成并保存哈希的 `text/plain` UTF-8 字节；出现 HTML 标签或解码失败即隔离。依次执行 Unicode 15.0 NFKC、ASCII 字母小写化、Unicode General Category 以 P/C/Z 开头的 code point 替换为单空格、连续空白折叠、首尾去空白；不做简繁转换、分词或停用词删除；
+- 在每个连续 CJK/ASCII字母/数字 token 两端加入 `^`、`$`，只在 token 内生成长度3、4、5的 Unicode code-point n-gram；不跨 token；
+- document 唯一键为 `(company_id, source_url, published_at, content_hash)`；同公司相同 content_hash 只保留 available_at 最早的一条；
+- 固定维度 \(M=2^{18}\)；对 n-gram 的 UTF-8 bytes 使用 MurmurHash3 x86_32、seed=0。令无符号32位结果为 h，index=`h mod M`，sign=高位 bit31 为0时 +1、为1时 −1；
+- 文档桶 k 的 signed count 为 \(z_{d,k}=\sum sign(ngram)\)；\(TF_{d,k}=sign(z_{d,k})\log(1+|z_{d,k}|)\)；
+- 截至 D−1 的去重文档数为 \(N_D\)，\(df_{k,D}=\sum_d\mathbf1(z_{d,k}\ne0)\)，\(IDF_{k,D}=\log((1+N_D)/(1+df_{k,D}))+1\)；
+- 文档向量 \(v_{d,k}=TF_{d,k}IDF_{k,D}\) 后做 L2 归一化；零向量视为无有效文本；
 - 公司向量为过去120日文本 TF-IDF 向量按 \(e^{-age/60}\) 衰减加权后 L2 归一化；
 - \(SemanticSim\) 为公司向量 cosine similarity；无有效文本时记不可配对，不填0；
-- IDF 的文档频次与公司向量按日增量更新，缓存规则见 §8.7。
+- 每个 D 的处理顺序固定为：先纳入 `available_at <= D-1 21:30` 的新增去重文档并更新 \(N_D,df,IDF\)，再以同一 \(IDF_D\) 重算受影响的120日公司向量；
+- IDF 的文档频次与公司向量按日增量更新，缓存规则见 §8.3.8–§8.3.9。
 
 B-LEX 不依赖预训练语义模型，允许覆盖具有 PIT 文本快照的完整历史，是 Track B 正式历史检验的默认口径。
 
@@ -459,13 +465,41 @@ D日首次确认时的成员快照，用于：
 - 防止事后改写信号；
 - 重放历史决策。
 
+### 冻结角色集合 \(B^E,L^E,K^E\)
+
+在首次确认日 \(\tau_{confirm}\) 收盘后一次性定义：
+
+\[
+B^E_u=E_{u,\tau_{confirm}},\qquad
+L^E_u=L_{u,\tau_{confirm}},\qquad
+K^E_u=K_{u,\tau_{confirm}}
+\]
+
+三者在 episode 生命周期内永久冻结。若 \(|K^E|<3\)，episode 登记 `NO_ROLE_COHORT`：可保留发现/确认样本，但不得进入 H-ROLE、H-MIG、容量时钟或产生交易。
+
+持仓/信号日的可交易候选：
+
+\[
+K^{trade}_{u,t}
+=
+\{i\in K^E_u:\ i\text{ 当日满足 §9.1 的交易状态、订单容量与 §9.3 约束}\}
+\]
+
+不得从 \(B^E\setminus K^E\) 补入新容量角色。正式迁移变量用 \(B^E,L^E,K^E\)；选股和候选级 LOO 用 \(K^{trade}\)，但 \(GCC^{\theta}\) 仍基于完整 \(K^E\) 测量题材状态。
+
+episode 合并时：
+
+- 科学研究样本在合并日前一日右删失，两个原 episode 不产生合并后的 H-ROLE/H-MIG 观测；
+- 生产运行集合取 \(B^E\) 并集；同股角色冲突时采用 \(\tau_{confirm}\) 更早 episode 的角色，仍并列时采用 episode_id 字典序较小者；
+- 合并后集合只服务持仓状态和退出，不生成新的主信号。
+
 ### Live Active Core \(A_{u,t}\)
 
 持仓期间每日更新的活跃核心。构造规则：
 
 1. **种子：** \(A_{u,\tau_{confirm}} = E_{u,\tau_{confirm}}\)；
 2. **每日纳入（对全市场股票 j）：** 同时满足
-   - j 与 LAC 等权行业残差收益序列的过去20日相关系数 \(\ge 0.50\)；
+   - 以当日更新前成员 \(A_{u,t-1}\) 固定回看 t−20:t−1，j 与该成员集合每日等权行业残差收益序列的相关系数 \(\ge 0.50\)；
    - 过去10日内至少1日 \(Active_{j}=1\)（定义见 §6.4）；
    - 非ST、非停牌、非退市整理；
 3. **每日移出：** 连续10个交易日不满足纳入条件(a)与(b)的股票；
@@ -499,8 +533,10 @@ LACTurnBreadth_{u,t}
 LACRelReturn5_{u,t}
 =
 \sum_{s=t-4}^{t}
-\frac{\sum_{j\in A_{u,s}}x_{j,s}}{\max(1,|A_{u,s}|)}
+\frac{\sum_{j\in A_{u,t}}x_{j,s}}{\max(1,|A_{u,t}|)}
 \]
+
+`LACRelReturn5` 使用当日成员集合固定回看，避免早期缺少历史 LAC 快照；要求当日集合非空且5个收益日完整，否则记 `INSUFFICIENT_WINDOW`。
 
 \[
 LACAttrition10_{u,t}
@@ -511,7 +547,7 @@ LACAttrition10_{u,t}
 \right)
 \]
 
-不足10个 LAC 观测日时 \(LACAttrition10\) 记 `INSUFFICIENT_WINDOW`，该分支不触发。
+不足10个 LAC 观测日时 \(LACAttrition10\) 记 `INSUFFICIENT_WINDOW`，该分支不触发。LACBreadth 与 LACTurnBreadth 需要当日集合非空；任一为空或缺失时记 `INSUFFICIENT_WINDOW`。连续衰退分支至少需要2个完整 LAC 观测日；任何输入窗口不足时 `LACDecay=0` 并登记，不得用缺失填0触发退出。
 
 正式动态衰退事件：
 
@@ -536,7 +572,7 @@ LACAttrition10>0.40
 
 |变量家族|计算集合|禁止用途|
 |---|---|---|
-|IES、IDS、CONF、状态机判定、EntryScore|Base Universe / Entry Cohort（题材级或 LOO，见 §3.4）|不得在 LAC 上重算确认|
+|IES、IDS、CONF、状态机判定、EntryScore|Base Universe / Entry Cohort / 冻结角色集合（题材级或 LOO，见 §3.4）|不得在 LAC 上重算确认|
 |\(LDS^E,CDS^E,PriceShare^E,RMI^E,CapacityBreadth^E\)|Entry Cohort 内冻结的 L 组与 K 组|不得用 LAC 新成员改写迁移归因|
 |LACBreadth、LACTurnBreadth、LACRelReturn5、LACAttrition10、LACDecay|Live Active Core|只允许进入持仓期动态监控与 COLLAPSE 独立分支；不得生成入场信号|
 |新成员 Active 事件|Live Active Core|进入 LAC 动态变量与机制报告，不进入冻结迁移估计|
@@ -553,7 +589,7 @@ rank/level 尺度纪律（§9.2）之外，本规范实行归属纪律：每个�
 |\(IDS^{\theta}_{u,D}\)（题材级）|题材|\(B\setminus L\)，不剔候选|状态机、Whipsaw5、Leg B2/X、§12 全部门槛|
 |\(IDS^{-i}_{u,D}\)（候选级）|候选股|\(B\setminus(L\cup\{i\})\)|该候选入场资格、\(CONF^{-i}\)、P1|
 |\(GCC^{\theta}_{u,D}\)（题材级）|题材|全体 K 的中位数|状态机（§12.4–12.8）|
-|\(GCC^{-i}_{u,D}\)（候选级）|候选股|\(K\setminus\{i\}\)|该候选入场资格（§13.1）、EntryScore|
+|\(GCC^{-i}_{u,D}\)（候选级）|候选股|\(K^E\setminus\{i\}\)|该候选入场资格（§13.1）|
 |\(CCS\_rank_i\)|候选股|K 组内分位|EntryScore 排序、tie-break|
 |\(CCS\_level_i\)|候选股|对 null 标准化|个股门槛、GCC 构造、Leg I、Study 4|
 |\(RMI^E,CapacityBreadth^E,LDS^E,CDS^E,HHI^E\)|题材|Entry Cohort 的冻结 L/K/B 组|入场状态机、EntryScore（经 Pctl_cross）、迁移研究|
@@ -1086,7 +1122,41 @@ B_{u,D-1}
 
 ### 8.3.5 平衡性闸门
 
-对 §8.3.2 全部匹配维度，计算真实成员 vs 伪题材成员池的标准化均值差（SMD）；任一维度 \(|SMD| > 0.25\) → 该题材日记 `NON_EVALUABLE(BALANCE_FAIL)`：不产生任何 level 变量、不产生信号、状态机当日维持前一日状态，并登记失败原因。SMD 全量分布入 Gate 报告。
+伪题材池按**成员出现次数**加权：成功的每个 control 权重 \(1/n_c\)，其内部每个成员权重 \(1/|B|\)；同一 donor 在不同 controls 重复出现时保留每次出现，不去重。真实成员各权重 \(1/|B|\)。
+
+连续 balance features 固定为：
+
+    log(FreeFloatMV)
+    log(ADV20)
+    CumReturn20
+    Volatility20
+    MedianTurnValue20
+    LimitUpCount20
+    ActiveDays20
+
+对每个连续特征 k：
+
+\[
+SMD_k
+=
+\frac{\mu^R_k-\mu^C_k}
+{\sqrt{((s^R_k)^2+(s^C_k)^2)/2}}
+\]
+
+均值和方差均按上述权重计算。分母为0且均值相同则 SMD=0；分母为0且均值不同则 \(|SMD|=\infty\)。
+
+类别 balance features 为每个实际出现的“申万一级行业”与“交易板块”独立 dummy。对类别 a：
+
+\[
+SMD_a
+=
+\frac{p^R_a-p^C_a}
+{\sqrt{(p^R_a(1-p^R_a)+p^C_a(1-p^C_a))/2}}
+\]
+
+零分母规则同连续特征。成员数量必须与真实题材完全相等，不使用 SMD。对连续特征另报告 q10/q50/q90 差除以真实组 IQR 的诊断，但不进入主闸门。
+
+任一连续或类别 \(|SMD|>0.25\)，或成员数不等 → 该题材日记 `NON_EVALUABLE(BALANCE_FAIL)`：不产生任何 level 变量、不产生信号、状态机当日维持前一日状态，并登记首个失败维度。全部 SMD 与诊断分位入 Gate 报告。
 
 ### 8.3.6 生成器验收套件 NG01–NG07（DESIGN 区执行，任一失败 → 生成器 FAIL，修复后重跑）
 
@@ -1210,7 +1280,7 @@ CONF^{-i}_{u,D}
 
 ## 9.1 容量是约束，不是预测信号
 
-容量候选 \(K_{u,D}\) 需要满足：
+首次确认前，临时容量集合 \(K_{u,D}\) 按下列规则构造；首次确认时将其冻结为 \(K^E\)（§3.3）：
 
 - 不属于注意力核心；
 - 自由流通市值位于题材前40%；
@@ -1221,6 +1291,8 @@ CONF^{-i}_{u,D}
 - 题材内至少3只容量候选。
 
 大市值和流动性只决定"能否承载资金"，不决定"是否该买"。
+
+首次确认后不再重选结构角色。每日只从 \(K^E\) 取满足当日可交易、订单容量、非涨停/停牌/ST及 §9.3 条件的 \(K^{trade}_{u,D}\)；新成员和原 \(K^E\) 外股票不得进入候选。
 
 ## 9.2 股票容量载体分数：双轨制
 
@@ -1238,8 +1310,8 @@ CONF^{-i}_{u,D}
 \[
 r^{-i}_{u,t}
 =
-\frac{1}{|B\setminus\{i\}|}
-\sum_{j\in B\setminus\{i\}}r_{j,t}
+\frac{1}{|B^E\setminus\{i\}|}
+\sum_{j\in B^E\setminus\{i\}}r_{j,t}
 \]
 
 \[
@@ -1283,7 +1355,7 @@ CLV_{i,D-k}>0.5
 
 ### 9.2.2 CCS_rank（排序轨）
 
-容量候选集合 \(K_{u,D}\) 内横截面分位等权（Pctl 按 §6.7）：
+当日可交易候选集合 \(K^{trade}_{u,D}\) 内横截面分位等权（Pctl 按 §6.7）：
 
 \[
 CCS\_rank_{i,D}
@@ -1301,7 +1373,7 @@ Pctl_{K}(Persist)
 
 ### 9.2.3 CCS_level（层级轨）
 
-每个原始特征先对匹配伪题材标准化：取该真实题材日 200 个匹配伪题材（§8.3）的全部容量候选（按 §9.1 同一资格规则在伪题材内构造）作为 null 池，按 §6.7 的 midrank Pctl 计算特征的经验分位：
+每个 \(K^E\) 成员的原始特征先对匹配伪题材标准化：取该真实题材日 200 个匹配伪题材（§8.3）在其伪确认日冻结的容量角色作为 null 池，按 §6.7 的 midrank Pctl 计算经验分位：
 
 \[
 CCS\_level_{i,D}
@@ -1372,9 +1444,9 @@ CLV_{j,D}
 LDS^E_{u,D}
 =
 \frac{
-\sum_{j\in L}DirectedDemand_{j,D}
+\sum_{j\in L^E}DirectedDemand_{j,D}
 }{
-\sum_{j\in B}DirectedDemand_{j,D}+\epsilon
+\sum_{j\in B^E}DirectedDemand_{j,D}
 }
 \]
 
@@ -1384,9 +1456,9 @@ LDS^E_{u,D}
 CDS^E_{u,D}
 =
 \frac{
-\sum_{j\in K}DirectedDemand_{j,D}
+\sum_{j\in K^E}DirectedDemand_{j,D}
 }{
-\sum_{j\in B}DirectedDemand_{j,D}+\epsilon
+\sum_{j\in B^E}DirectedDemand_{j,D}
 }
 \]
 
@@ -1396,13 +1468,13 @@ CDS^E_{u,D}
 PriceShare^E_{g,D}
 =
 \frac{
-\sum_{j\in g}\max(x_{j,D},0)
+\sum_{j\in g^E}\max(x_{j,D},0)
 }{
-\sum_{j\in B}\max(x_{j,D},0)+\epsilon
+\sum_{j\in B^E}\max(x_{j,D},0)
 }
 \]
 
-分别计算Leader与Capacity组。
+分别令 \(g^E=L^E,K^E\) 计算。LDS、CDS 或 PriceShare 的分母为0时，对应份额定义为0，不使用 \(\epsilon\) 近似。
 
 ## 10.4 迁移指数 \(RMI^E\)
 
@@ -1434,10 +1506,10 @@ RMI^E_{u,D}
 CapacityBreadth^E_{u,D}
 =
 \frac{
-\sum_{j\in K}
+\sum_{j\in K^E}
 \mathbf 1(TurnZ_j>0\land RelAccel_j>0)
 }{
-|K|
+|K^E|
 }
 \]
 
@@ -1448,11 +1520,13 @@ CapacityBreadth^E_{u,D}
 \[
 HHI^E_{u,D}
 =
-\sum_{j\in B}
+\sum_{j\in B^E}
 \left(
-\frac{DirectedDemand_{j,D}}{\sum_{k\in B}DirectedDemand_{k,D}+\epsilon}
+\frac{DirectedDemand_{j,D}}{\sum_{k\in B^E}DirectedDemand_{k,D}}
 \right)^2
 \]
+
+当 \(\sum_{k\in B^E}DirectedDemand_{k,D}=0\) 时，\(HHI^E=0\)。
 
 "正向需求集中度上升"在全文中定义为 \(\Delta_3 EMA3(HHI^E) > 0\)。
 
@@ -1496,7 +1570,7 @@ HHI^E_{u,D}
 \[
 GCC^{\theta}_{u,D}
 =
-Median_{j\in K}(CCS\_level_{j,D})
+Median_{j\in K^E}(CCS\_level_{j,D})
 \]
 
 ### 候选级（供入场资格）：候选股不能批准自己的容量阶段
@@ -1504,7 +1578,7 @@ Median_{j\in K}(CCS\_level_{j,D})
 对候选股 \(i\)：
 
 \[
-K^{-i}_{u,D}=K_{u,D}\setminus\{i\},
+K^{-i}_{u,D}=K^E_u\setminus\{i\},
 \quad |K^{-i}|\ge2
 \]
 
@@ -1534,7 +1608,7 @@ Mean(GCC^{\bullet}_{u,D-3:D-1})
 
     GCC ∈ [0.55, 0.85]        （level 尺度）
     GCCSlope > 0
-    对应集合（K 或 K^{-i}）中至少1只股票满足：
+    对应集合（K^E 或 K^{-i}）中至少1只股票满足：
         TurnZ > 0
         RelAccel > 0
         Persist >= 2
@@ -1691,7 +1765,7 @@ Lag_M=\tau_{migration}-\tau_{confirm}
 
 **主信号窗：** 每个 episode 仅有一次主信号窗：episode 内**首次进入集合 {EARLY_CAPACITY, HEALTHY_TRANSFER}（以先发生者计）**的当日为唯一主信号日 D。此后无论状态如何往返，该 episode 不再产生主信号。
 
-主信号日对每只容量候选执行（题材级状态由 §12 判定，候选级资格如下）：
+主信号日只对 \(K^{trade}_{u,D}\) 中每只容量候选执行（题材级状态由 §12 判定，候选级资格如下）：
 
     CONF(-i) 达标（§8.6 五条件）
     GCC(-i) 启动（§11.3，候选级）
@@ -1712,10 +1786,10 @@ EntryScore_i
 +
 0.20\times Pctl_{cross}(RMI^E)
 +
-0.15\times Pctl_{cross}(GCCSlope^{-i})
+0.15\times Pctl_{cross}(GCCSlope^{\theta})
 \]
 
-**分位基准：** \(Pctl_{cross}\)（按 §6.7）为同日全部处于 DISCOVERED 及以后状态题材的横截面分位；题材级变量（\(RMI^E\)、GCCSlope）在题材间取分位后映射到候选股。\(CCS\_rank\) 为组内排序成分（§9.2.2），\(CONF\) 本身已是 level 尺度。
+**分位基准：** \(Pctl_{cross}\)（按 §6.7）为同日全部处于 DISCOVERED 及以后状态题材的横截面分位；题材级变量（\(RMI^E\)、\(GCCSlope^{\theta}\)）每题材日只贡献一个观测，取题材间分位后映射到其候选股，避免同题材候选数改变横截面权重。\(CCS\_rank\) 为组内排序成分（§9.2.2），\(CONF\) 本身已是 level 尺度。
 
 这些权重是冻结前登记的工程权重，不通过网格优化。敏感性仅比较等权版本，不选择较优者替换主口径。
 
@@ -2071,8 +2145,9 @@ Whipsaw5
 
 ### 通过条件
 
-- 处理组未来扩散AUC高于控制组，按 Gate 2 的 MES/CI 规则裁决；
-- 假突破率至少低10个百分点；
+- **Gate 1 / H-DISC：** 真实 D−1 候选题材的未来5日 NewJoin AUC − 匹配伪题材 AUC 按 Gate 1 MES/CI 裁决；
+- **Gate 2 / H-CONF：** 已确认处理组与同日未确认匹配题材的 Whipsaw 率差（控制−处理）按 Gate 2 MES/CI 裁决，MES=10个百分点；
+- 未来5日 \(IDS^\theta\) AUC 为 Gate 1/2 的强制次要机制读数，不替代上述唯一主 estimand；
 - LOO后仍成立；
 - Track S和Track B分别报告。
 
@@ -2082,7 +2157,7 @@ Whipsaw5
 
 ### 个股未来功能分数
 
-对 \(i\in L\cup K\)，每个分量均对 §8.3 匹配伪题材中同资格股票取 §6.7 midrank 分位：
+对 \(i\in L^E\cup K^E\)，每个分量均对 §8.3 匹配伪题材中同资格股票取 §6.7 midrank 分位：
 
 \[
 FutureAttention_i
@@ -2118,23 +2193,23 @@ Pctl_{null}(MorningExecutableValueShare5_i)
 \[
 \theta^{ROLE}_{A}
 =
-Mean_{i\in L}(FutureAttention_i)
+Mean_{i\in L^E}(FutureAttention_i)
 -
-Mean_{i\in K}(FutureAttention_i)
+Mean_{i\in K^E}(FutureAttention_i)
 \]
 
 \[
 \theta^{ROLE}_{C}
 =
-Mean_{i\in K}(FutureCapacity_i)
+Mean_{i\in K^E}(FutureCapacity_i)
 -
-Mean_{i\in L}(FutureCapacity_i)
+Mean_{i\in L^E}(FutureCapacity_i)
 \]
 
 ### 判读
 
-- Gate 3 PASS：两个 estimand 的 Holm 调整单侧95% CI下界均 > 0.05；
-- Gate 3 FAIL：任一 estimand 的95% CI上界 < 0；
+- Gate 3 PASS：两个 estimand 的单侧95% CI下界均 > 0.05，复合 p 值按 §18.0 IUT 定义；
+- Gate 3 FAIL：任一 estimand 的 Bonferroni 单侧97.5%上界 < 0；
 - 其余为 INCONCLUSIVE；
 - P5 角色随机化后两个 contrast 应回到0附近；
 - 至少60%的自然年度两个 contrast 同时为正，否则即使统计 PASS 也降级为 INCONCLUSIVE；
@@ -2177,8 +2252,27 @@ P(\text{真实题材确认后5日内 }GCC^{\theta}\text{ 启动})
 P(\text{匹配伪题材对应5日内启动})
 \]
 
-- \(\Delta StartRate_5\) 的95% CI下界 > 0.10（MES = 10 个百分点）；
-- 容量需求份额相对匹配控制的增量达到附录 B Gate 4 MES；
+\[
+\Delta CDS_5
+=
+\left(CDS^E_{D+5}-CDS^E_D\right)_{real}
+-
+\left(CDS^E_{D+5}-CDS^E_D\right)_{null}
+\]
+
+\[
+\Delta PriceShare_5
+=
+\left[(PriceShare^E_K-PriceShare^E_L)_{D+5}
+-(PriceShare^E_K-PriceShare^E_L)_D\right]_{real}
+-
+\left[(PriceShare^E_K-PriceShare^E_L)_{D+5}
+-(PriceShare^E_K-PriceShare^E_L)_D\right]_{null}
+\]
+
+- Gate 4 的三个共同主 estimand 为 \(\Delta StartRate_5,\Delta CDS_5,\Delta PriceShare_5\)；
+- MES_pass 分别为 0.10、0.05、0.05；MES_fail 均为0；
+- 三者按 §18.0 IUT 全部通过才 PASS；任一有反向证据才 FAIL；
 - 容量组未来20日净异常收益高于容量匹配随机组；
 - 结果在剔除最大市值股和最高成交股后仍存在。
 
@@ -2256,11 +2350,14 @@ Return20
 
 每个 Gate 的 Population、Estimand、Null、MES、Sample、Dependence、Multiplicity、Sequential、Decision、Failure state 十项见附录 B。方向统一为“数值越大越好”的效果量 \(\theta_g\)：
 
-- **PASS：** Holm 校正后的单侧 95% CI 下界 \(L_g > MES^{pass}_g\)；
-- **FAIL：** 同一置信装置的上界 \(U_g < MES^{fail}_g\)；
+- **固定顺序：** Gate 1→2→…→9；Gate g 仅在全部前序 Gate PASS 后开庭。固定顺序 gatekeeping 在每 Gate \(\alpha=0.05\) 下控制核心家族强 FWER≤5%；
+- **单一 estimand Gate：** \(p_g\) 为检验 \(H_0:\theta_g\le MES^{pass}_g\) 的单侧 p 值；
+- **复合 Gate：** 对 m 个共同主 estimand 分别得到 \(p_{g,k}\)，使用 intersection-union test：\(p_g=\max_k p_{g,k}\)。Gate 3 的 m=2；Gate 4 的 m=3；Gate 8 的 m=2；Gate 9 的 m=2；
+- **PASS：** \(p_g<0.05\)，等价地所有共同主 estimand 的单侧95%下界均高于各自 \(MES^{pass}\)；
+- **FAIL：** 对反向命题 \(\theta_{g,k}<MES^{fail}_{g,k}\)，使用 Bonferroni 同时上界（单侧置信度 \(1-0.05/m\)）；任一共同主 estimand 的该上界低于其 \(MES^{fail}\)；
 - **INCONCLUSIVE：** 其余全部情形（含 \(L_g\le MES^{pass}\) 且 \(U_g\ge MES^{fail}\)）。
 
-\(MES^{fail}_g \le MES^{pass}_g\)。FAIL 表示“证据支持效果低于最低可接受区间”，不再以“不满足 PASS”代替。HOLDOUT 上 INCONCLUSIVE → 终局 `INSUFFICIENT_EVIDENCE`，不得输出该 Gate 的 FAIL_*。样本/装置失败也 → `INSUFFICIENT_EVIDENCE`。
+\(MES^{fail}_g \le MES^{pass}_g\)。FAIL 表示“证据支持效果低于最低可接受区间”，不再以“不满足 PASS”代替。HOLDOUT 上 Gate 1–8 INCONCLUSIVE → 终局 `INSUFFICIENT_EVIDENCE`；Gate 9 与 Gate S 的特殊终局见 §22。样本/装置失败同理。
 
 ## Gate 0：数据、PIT 与生成器
 
@@ -2364,9 +2461,11 @@ FAIL：
 
 **强制逆向选择对照：** 被 REJECT_GAP 拒绝的信号，假想以拒绝日 09:35—10:00 VWAP 成交，计算其 NetAlpha20 并与实际成交组比较：
 
-- 若被拒组−成交组的 Holm 校正后 95% CI 下界 > 0，REJECT_GAP 规则记 `FAIL_ADVERSE_SELECTION`，不得进入生产，必须修订；
-- 若其 CI 上界 < 0，规则保留；
-- 区间跨0，记 `INCONCLUSIVE_ADVERSE_SELECTION`，REJECT_GAP 不得进入生产（保守禁用），入口 Gate 8 可继续以“无 REJECT_GAP”规则评估；
+- 定义 \(\theta_{ADV}=NetAlpha20_{rejected}-NetAlpha20_{filled}\)，非劣界为1个百分点；
+- guard PASS：\(\theta_{ADV}\) 的单侧95%上界 < 0.01；
+- guard FAIL：\(\theta_{ADV}\) 的单侧95%下界 > 0.01，记 `FAIL_ADVERSE_SELECTION`；
+- 其余记 `INCONCLUSIVE_ADVERSE_SELECTION`，REJECT_GAP 不得进入生产（保守禁用），Gate 8 可继续以“无 REJECT_GAP”规则重新形成预注册生产候选；
+- Gate 8 的两个共同主 estimand 为执行 NetAlpha20 与 \(-\theta_{ADV}\)，按 §18.0 IUT 合成；
 - 该对照在 VALIDATION 与 HOLDOUT 各报告一次。
 
 FAIL：
@@ -2424,7 +2523,7 @@ FAIL：
 
 ## P5：角色随机化
 
-在每个题材的 \(L\cup K\) 内保持 \(|L|\) 与 \(|K|\) 不变，使用 §8.3 seed 规则进行5,000次无放回标签置换；每次重算 \(\theta^{ROLE}_A,\theta^{ROLE}_C\)。真实双 contrast 必须优于随机标签，用于 Gate 3 的匹配集合内随机化检验。不得以角色构造资格重新筛选置换标签。
+在每个题材的 \(L^E\cup K^E\) 内保持 \(|L^E|\) 与 \(|K^E|\) 不变，使用 §8.3 seed 规则进行5,000次无放回标签置换；每次重算 \(\theta^{ROLE}_A,\theta^{ROLE}_C\)。真实双 contrast 必须优于随机标签，用于 Gate 3 的匹配集合内随机化检验。不得以角色构造资格重新筛选置换标签。
 
 ## P6：供应商交叉
 
@@ -2455,6 +2554,33 @@ FAIL：
 - 各板块、牛熊状态、题材规模层的假点火率；
 - 假信号的 GCC/IDS/CCS_level 分布。
 
+### 假信号率唯一定义
+
+对 control c：
+
+- `P10_EVALUABLE(c,D)=1` 当其交叉拟合 reference controls 不少于100、通过同构 SMD 闸门且完整链无缺失；
+- `P10_FAKE_SIGNAL(c,D)=1` 当且仅当该假真实题材在 D 日完整链产生至少一只主信号；同题材多股仍计1。
+
+\[
+FalseSignalRate(W)
+=
+\frac{\sum_{D\in W}\sum_c P10\_FAKE\_SIGNAL(c,D)}
+{\sum_{D\in W}\sum_c P10\_EVALUABLE(c,D)}
+\]
+
+分母为0的窗口记 `P10_INSUFFICIENT`，不填0。年化假 episode 数：
+
+\[
+AnnualFalseEpisodes_y
+=
+\sum_{D\in y}
+FalseSignalRate(\{D\})\times RealEvaluableThemes_D
+\]
+
+其中 `RealEvaluableThemes_D` 为 D 日通过 §8.3 可行性和平衡闸门的真实题材数。板块分层按题材成员数最多的交易板块（并列取板块代码升序），规模层按 VALIDATION 冻结的成员数 tertile。
+
+Phase-I 99% 预测上界：在 VALIDATION 日级 `(fake_count,evaluable_count)` 上按自然月做10,000次有放回 block bootstrap；每次计算全部连续28交易日 pooled ratio 的最大值，取这些最大值的99%分位。总体与每个分层（累计 evaluable≥500）分别冻结；FORWARD 任一有效层超过其上界即 `NULL_RATE_DRIFT`。
+
 执行规则：
 
 1. 200 个 controls 按 `Hash(theme_id,D,control_index) mod 5` 固定分为5 fold；
@@ -2465,6 +2591,14 @@ FAIL：
 6. VALIDATION 输出冻结为 Phase-I null 基线，FORWARD 只监控不重估；
 7. FORWARD 28交易日滚动假主信号率超过 Phase-I 同层 99% 预测上界 → `NULL_RATE_DRIFT`，按 §21.6 QUARANTINE；
 8. P10 是仪器审计，不进入 Holm 科学假设家族；其失败使测量制度无效，按 Gate 0 处置。
+
+### NG07 二阶 brute-force recipient 规则
+
+仅用于 NG07 基准。将第一层 control c 定义为稳定 recipient：
+
+    recipient_id = "P10|" + real_theme_id + "|" + D + "|" + control_index
+
+其排除集为 §8.3.1 原真实题材排除集并上 c 的全部成员；第二层 control k 的 seed 为 `Hash(spec_version,recipient_id,D,k)`，按 §8.3.2–§8.3.5 从头生成200个 controls，不复用第一层 donor membership。NG07 比较的“信号率差”即上述 FalseSignalRate 的绝对百分点差。
 
 ---
 
@@ -2494,7 +2628,7 @@ episode 层基准为匹配伪题材容量篮子同构执行，组合层基准为
 
 同一题材多只股票不能当作独立样本。合并后的 episode 按单单元计。伪题材间允许 donor 复用导致基准相关，该依赖由真实题材簇聚类单元吸收，不把200个篮子当独立样本。
 
-**Monte Carlo 精度闸门：** bootstrap/随机化检验使用不少于5,000次；若 Holm 临界边界两侧的 Monte Carlo 95% 二项置信区间跨越决策阈值，自动增加到50,000次；仍跨越则 INCONCLUSIVE。
+**Monte Carlo 精度闸门：** bootstrap/随机化检验使用不少于5,000次；若 Gate 固定顺序阈值0.05（或 Gate S Holm 阈值）两侧的 Monte Carlo 95% 二项置信区间跨越决策阈值，自动增加到50,000次；仍跨越则 INCONCLUSIVE。
 
 ## 20.3 多重检验
 
@@ -2510,7 +2644,9 @@ episode 层基准为匹配伪题材容量篮子同构执行，组合层基准为
     H-EXEC
     H-EXIT
 
-上述9个正式 Gate 对应假设使用 Holm 控制家族错误率5%。Gate S 与 Study 5 独立成族，单独校正。
+上述9个正式 Gate 使用 §18.0 固定顺序 gatekeeping；每个复合 Gate 使用 IUT，核心家族强 FWER≤5%。不得在前序未 PASS 时计算或解释下游正式 p 值。
+
+Gate S 在核心 Gate 完成后独立评估三个 overlay 候选，使用 Holm FWER 5%；Study 5 为 EXPLORATORY，不进入正式家族。
 
 探索结果必须标记：
 
@@ -2545,10 +2681,10 @@ episode 层基准为匹配伪题材容量篮子同构执行，组合层基准为
 
 ## 20.5 经济门槛
 
-最终PASS同时要求：
+固定20日入口政策取得 `PASS_ENTRY_ONLY` 资格同时要求：
 
 1. episode 层 NetAlpha20 按附录 B Gate 8 的 PASS 规则通过；
-2. 完整组合对**暴露匹配基准**的年化净超额不低于5%；
+2. 固定20日完整组合对**暴露匹配基准**的年化净超额不低于5%；
 3. 至少60%的自然年度暴露匹配超额为正；
 4. 最大回撤不超过同风险暴露基准回撤1.25倍；
 5. 成本翻倍后累计净超额仍为正；
@@ -2556,7 +2692,7 @@ episode 层基准为匹配伪题材容量篮子同构执行，组合层基准为
 7. 实际成交率不低于70%；
 8. §15.3 账本恒等式零失败。
 
-这些是工程验收门槛，不是市场自然常数；修改即创建新SPEC版本。
+最终 `PASS` 还要求 Gate 9 PASS，且动态退出完整组合独立重复满足上列第2–8项；否则终局按 §22。以上是工程验收门槛，不是市场自然常数；修改即创建新SPEC版本。
 
 ## 20.6 一等读数清单
 
@@ -2766,24 +2902,31 @@ episode 数与墙上时间必须同时满足，不采用“任一先到”规则
     FAIL_EXECUTION
     FAIL_ADVERSE_SELECTION
     FAIL_EXIT_INCREMENT
-    FAIL_OVERLAY
-    TRACK_B_INSUFFICIENT（Track B报告标记，不阻断Track S）
-    LOW_POWER_CLIMAX（报告标记）
+    FAIL_ECONOMIC_GUARDRAIL
     PASS_ENTRY_ONLY
     PASS
     KILL_SAFETY
     KILL_ECONOMIC_FAIL
     KILL_MEASUREMENT_REGIME
 
+报告标记（不覆盖上述唯一终局）：
+
+    TRACK_B_INSUFFICIENT
+    LOW_POWER_CLIMAX
+    INCONCLUSIVE_EXIT
+    OVERLAY_PASS / OVERLAY_REJECTED / OVERLAY_INCONCLUSIVE
+
 逐层终止：
 
     Gate 0失败 → INVALID_DATA
     任一账本闸门失败 → LEDGER_INVALID
-    任一 Gate INCONCLUSIVE / 样本装置失败 → INSUFFICIENT_EVIDENCE
-    Gate 1–8 有统计支持的 FAIL → 对应 FAIL_*
-    Gate 9 FAIL → PASS_ENTRY_ONLY 或 FAIL_EXIT_INCREMENT
-    Gate S FAIL/INCONCLUSIVE → FAIL_OVERLAY（不否决主策略）
-    Gate 1–9 全部 PASS 且 §20.5 通过 → PASS
+    Gate 1–8 任一 INCONCLUSIVE / 样本装置失败 → INSUFFICIENT_EVIDENCE
+    Gate 1–8 任一有统计支持的 FAIL → 对应 FAIL_*
+    Gate 1–8 全部 PASS，但固定20日入口政策未通过 §20.5 → FAIL_ECONOMIC_GUARDRAIL
+    Gate 1–8 与固定20日入口政策通过，Gate 9 PASS → PASS
+    Gate 1–8 与固定20日入口政策通过，Gate 9 FAIL → PASS_ENTRY_ONLY，并附 FAIL_EXIT_INCREMENT
+    Gate 1–8 与固定20日入口政策通过，Gate 9 INCONCLUSIVE → PASS_ENTRY_ONLY，并附 INCONCLUSIVE_EXIT
+    Gate S 只产生 OVERLAY_* 报告标记；仅 OVERLAY_PASS 可启用叠加层，不改变主策略终局
 
 不能用下游失败否定尚未单独失败的上游理论。**FAIL 是有反向证据的判词，不是“不够显著”的别名。**
 
@@ -2895,10 +3038,10 @@ episode 数与墙上时间必须同时满足，不采用“任一先到”规则
             if not pass_theme_gate(base, D):
                 continue
 
-            leaders = identify_attention_roles(base, D)
-            capacity_set = identify_capacity_candidates(base - leaders, D)
-            if len(capacity_set) < 3:
-                continue
+            provisional_leaders = identify_attention_roles(base, D)
+            provisional_capacity = identify_capacity_candidates(
+                base - provisional_leaders, D
+            )
 
             nulls = build_matched_nulls_v6(
                 theme, D, n=200, donor_index=donor_index,
@@ -2910,21 +3053,45 @@ episode 数与墙上时间必须同时满足，不采用“任一先到”规则
 
             pseudo_stats = aggregate_pseudo_theme_stats_once(nulls, D)
             ids_theme = independent_diffusion(
-                members=base - leaders, nulls=pseudo_stats, owner="theme"
+                members=base - provisional_leaders,
+                nulls=pseudo_stats, owner="theme",
             )
-            ccs_levels = carrier_scores_level(capacity_set, pseudo_stats)
+
+            ies = ignition_evidence(
+                theme, provisional_leaders, pseudo_stats
+            )
+            role_cohort = load_or_freeze_role_cohort_on_first_confirmation(
+                theme=theme, date=D, base=base,
+                leaders=provisional_leaders,
+                capacity=provisional_capacity,
+                ies=ies, ids_theme=ids_theme,
+            )
+            if role_cohort.status == "NO_ROLE_COHORT":
+                update_discovery_confirmation_state_only(theme, ies, ids_theme)
+                continue
+            if not role_cohort.is_frozen:
+                continue
+
+            capacity_trade = current_trade_eligible_subset(
+                role_cohort.K_E, D
+            )
+            ccs_levels = carrier_scores_level(
+                role_cohort.K_E, pseudo_stats
+            )
             gcc_theme = median(ccs_levels.values())
-            rmi = role_migration_index(theme, leaders, capacity_set, D)
+            rmi = role_migration_index(
+                role_cohort.B_E, role_cohort.L_E, role_cohort.K_E, D
+            )
 
             state = lifecycle_state_once_per_theme(
-                theme, ies=ignition_evidence(theme, leaders, nulls),
+                theme, ies=ies,
                 ids_theme=ids_theme, gcc_theme=gcc_theme, rmi=rmi,
                 lac_decay=lac_health.get(theme).decay_if_held,
                 priority=PARAMS.state_priority,
             )
 
             if first_entry_window(theme, state):
-                for stock in capacity_set:
+                for stock in capacity_trade:
                     ids_loo = exact_loo_from_sufficient_stats(
                         pseudo_stats, removed_recipient=stock,
                     )
@@ -3056,6 +3223,7 @@ episode 数与墙上时间必须同时满足，不采用“任一先到”规则
 |P10 cross-fit folds|5|fold|工程冻结|10|
 |NG06/07 分层验收题材日|100|题材日|工程|200|
 |NG07 信号率差/分位相关|≤1pp / ≥0.99|—|精度闸门|更严格仅报告|
+|P10 Phase-I bootstrap/分层最小分母|10,000 / 500|次 / control观测|工程|—|
 |计算 SLO p95/p99|60 / 90|分钟|运行治理|—|
 |计算截止/超时隔离比例|21:00 / 10%|时间 / 题材|运行治理|—|
 |IES / IDS 阈值|0.80 / 0.80|null分位|先验|0.75 / 0.85|
@@ -3080,6 +3248,7 @@ episode 数与墙上时间必须同时满足，不采用“任一先到”规则
 |买入/卖出窗口|09:35–10:00 / 14:30–15:00|时间|制度|—|
 |REJECT_GAP分位/冷启动数|.85 / 40|— / 个|先验|.80/.90|
 |临时跳空阈值 主/创科/北交|.06/.09/.12|收益|先验|—|
+|REJECT_GAP逆向选择非劣界|1|百分点|经济护栏|0 / 2|
 |单股/题材/总仓位|10%/20%/60%|NAV|先验|—|
 |最低建仓权重|2|% NAV|工程|1% / 3%|
 |同时题材簇|3|簇|先验|—|
@@ -3092,7 +3261,7 @@ episode 数与墙上时间必须同时满足，不采用“任一先到”规则
 |年化净超额/正年度/回撤倍数|5%/60%/1.25|—|工程|—|
 |Gate 3 角色双 contrast MES|0.05|null分位差|经济先验|0.03 / 0.10|
 |Gate 3 正向年度比例|60|%年度|工程护栏|—|
-|Study3 启动率差 MES|10|百分点|经济先验|5 / 15|
+|Gate 4 StartRate/CDS/PriceShare MES|0.10 / 0.05 / 0.05|份额差|经济先验|减半/加倍报告|
 |DESIGN可行性年化信号|40（关闭）/60（稳健）|episode|工程|—|
 |FORWARD最小样本|60 episode AND 12月|—|工程|—|
 |Run-in / mini Run-in|20 / 5|交易日|工程|—|
@@ -3210,18 +3379,18 @@ Canonical 静态检查必须证明：
 
 |Gate|Population / Sample|Estimand \(\theta_g\)|Null|MES_pass / MES_fail|Dependence|Multiplicity|Sequential|Decision / Failure state|
 |---|---|---|---|---|---|---|---|---|
-|1 发现|共同支持域内 D−1 候选题材日|未来5日 NewJoin AUC：真实−null|≤0|0.05 / 0|题材簇×月|核心9 Gate Holm FWER 5%|HOLDOUT一次；FORWARD仅Kill|§18.0；不足→INCONCLUSIVE|
-|2 确认|可评估确认/未确认匹配题材|Whipsaw率：控制−处理|≤0|0.10 / 0|题材簇×月|核心9 Gate Holm FWER 5%|HOLDOUT一次；FORWARD仅Kill|§18.0；不足→INCONCLUSIVE|
-|3 角色可分离|已确认且 L/K 均非空的 episode|\(\theta^{ROLE}_A,\theta^{ROLE}_C\)|任一≤0|各0.05 / 0|题材簇×月|核心9 Gate Holm FWER 5%；两 contrast 交并|HOLDOUT一次；FORWARD仅Kill|两者均PASS才PASS；任一FAIL才FAIL；其余INCONCLUSIVE|
-|4 迁移|Gate 3 PASS 域内已确认 episode|\(\Delta StartRate_5\) 及 \(CDS^E\) 增量|任一≤0|各0.10 / 0|题材簇×月|核心9 Gate Holm FWER 5%；两读数交并|HOLDOUT一次；FORWARD仅Kill|两读数均PASS才PASS；任一FAIL才FAIL；其余INCONCLUSIVE|
-|5 时钟|Gate 4 PASS 域内容量候选|标准化后交互项 \(\beta_3\)|≤0|0.05 / 0|题材簇×月|核心9 Gate Holm FWER 5%|HOLDOUT一次；FORWARD仅Kill|§18.0；不足→INCONCLUSIVE|
-|6 选择|同题材同日可交易容量股|EntryScore前2−匹配随机 NetAlpha20|≤0|1% / 0|题材簇×月|核心9 Gate Holm FWER 5%|HOLDOUT一次；FORWARD仅Kill|§18.0；不足→INCONCLUSIVE|
-|7 交互|2×2共同支持样本|\(\Delta_{INT}\)|≤0|1% / 0|题材簇×月|核心9 Gate Holm FWER 5%|HOLDOUT一次；FORWARD仅Kill|§18.0；不足→INCONCLUSIVE|
-|8 执行|有效期内实际成交信号|NetAlpha20|≤0|1% / 0|题材簇×月|核心9 Gate Holm FWER 5%；逆向选择同家族|HOLDOUT一次；FORWARD仅Kill|§18.0；逆向选择按 §18 Gate 8；不足→INCONCLUSIVE|
-|9 退出|同一入场成交序列|动态退出−固定20日的年化Sharpe差；且净收益差非负|≤0|0.10 / 0|题材簇×月|核心9 Gate Holm FWER 5%；两读数交并|HOLDOUT一次；FORWARD仅Kill|Sharpe PASS且收益CI下界≥0才PASS；任一FAIL才FAIL；其余INCONCLUSIVE|
+|1 发现|共同支持域内 D−1 候选题材日|未来5日 NewJoin AUC：真实−null|≤0|0.05 / 0|题材簇×月|固定顺序第1，α=.05|HOLDOUT一次；FORWARD仅Kill|§18.0；不足→INCONCLUSIVE|
+|2 确认|可评估确认/未确认匹配题材|Whipsaw率：控制−处理|≤0|0.10 / 0|题材簇×月|固定顺序第2，α=.05|仅Gate1 PASS后；HOLDOUT一次|§18.0；不足→INCONCLUSIVE|
+|3 角色可分离|已确认且 \(L^E/K^E\) 均非空的 episode|\(\theta^{ROLE}_A,\theta^{ROLE}_C\)|任一≤0|各0.05 / 0|题材簇×月|固定顺序第3；m=2 IUT|仅Gate1–2 PASS后；HOLDOUT一次|两者均PASS才PASS；任一FAIL才FAIL；其余INCONCLUSIVE|
+|4 迁移|Gate 3 PASS 域内已确认 episode|\(\Delta StartRate_5,\Delta CDS_5,\Delta PriceShare_5\)|任一≤0|0.10/0.05/0.05；fail均0|题材簇×月|固定顺序第4；m=3 IUT|仅Gate1–3 PASS后；HOLDOUT一次|三者均PASS才PASS；任一FAIL才FAIL；其余INCONCLUSIVE|
+|5 时钟|Gate 4 PASS 域内容量候选|标准化后交互项 \(\beta_3\)|≤0|0.05 / 0|题材簇×月|固定顺序第5，α=.05|仅Gate1–4 PASS后；HOLDOUT一次|§18.0；不足→INCONCLUSIVE|
+|6 选择|同题材同日可交易容量股|EntryScore前2−匹配随机 NetAlpha20|≤0|1% / 0|题材簇×月|固定顺序第6，α=.05|仅Gate1–5 PASS后；HOLDOUT一次|§18.0；不足→INCONCLUSIVE|
+|7 交互|2×2共同支持样本|\(\Delta_{INT}\)|≤0|1% / 0|题材簇×月|固定顺序第7，α=.05|仅Gate1–6 PASS后；HOLDOUT一次|§18.0；不足→INCONCLUSIVE|
+|8 执行|有效期内实际成交信号|NetAlpha20 与 \(-\theta_{ADV}\)|任一不达标|0.01/−0.01；fail 0/−0.01|题材簇×月|固定顺序第8；m=2 IUT|仅Gate1–7 PASS后；HOLDOUT一次|两者均PASS才PASS；逆向选择按 §18 Gate 8；其余INCONCLUSIVE|
+|9 退出|同一入场成交序列|动态−固定 Sharpe差、净收益差|任一≤0|0.10/0；fail均0|题材簇×月|固定顺序第9；m=2 IUT|仅Gate1–8 PASS后；HOLDOUT一次|两者均PASS才PASS；任一FAIL才FAIL；其余INCONCLUSIVE|
 |S 叠加|同一入口/退出序列|叠加−无叠加的Sharpe差|≤0|0.10 / 0|月块|独立 Gate S 家族 Holm FWER 5%|HOLDOUT一次；FORWARD仅Kill|按 §18.0；FAIL/INCONCLUSIVE 均不进入生产|
 
-**MES 说明：** 以上为预注册工程/经济最小效应，不是市场自然常数。修改即新版本。Gate 3/4/9 的共同主读数使用交并规则，禁止事后择优。所有效果量输出双侧95% CI，正式方向判定使用 Holm 调整后的单侧界。
+**MES 说明：** 以上为预注册工程/经济最小效应，不是市场自然常数。修改即新版本。复合 Gate 使用 §18.0 IUT，核心9 Gate 使用固定顺序 gatekeeping；Gate S 才使用 Holm。所有效果量输出双侧95% CI，并输出正式单侧下界与反向 Bonferroni 同时上界。
 
 # 附录 C：Freeze 检查表
 
