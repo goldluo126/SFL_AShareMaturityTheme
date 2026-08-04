@@ -505,6 +505,8 @@ episode 合并时：
 3. **每日移出：** 连续10个交易日不满足纳入条件(a)与(b)的股票；
 4. **身份登记：** 每只成员记录 `joined_at` / `left_at` / `join_reason`，LAC 每日快照哈希归档。
 
+确认日的种子规则覆盖每日纳入/移出规则；首次动态更新从 \(\tau_{confirm}+1\) 开始，使用 \(A_{u,\tau_{confirm}}\) 作为 \(A_{u,t-1}\)。
+
 LAC 用于：
 
 - 新成员扩散监控；
@@ -769,7 +771,9 @@ J(A_{u_1,t}, A_{u_2,t}) \ge 0.60
 - 保留 \(u_1\) 的 episode_id 与全部事件时间；
 - 成员集合取并集，Entry Cohort 各自冻结存档；
 - \(u_2\) 的持仓并入 \(u_1\) 账务，其状态机与退出腿统一由 \(u_1\) 接管；
-- \(u_2\) 登记 `MERGED_INTO = u_1`，统计推断按合并后单 episode 计。
+- \(u_2\) 登记 `MERGED_INTO = u_1`；
+- H-ROLE/H-MIG 及其他 episode 科学 estimand 对两个原 episode 均在合并日前一日右删失；合并后运行片段不作为新的科学 episode；
+- 每笔持仓保留 `origin_episode_id`，合并后 PnL 仍归原始来源；组合净值只计一次。合并运行片段只进入组合政策、风险和执行报告，不进入 episode 层科学推断。
 
 ### 分裂
 
@@ -1143,7 +1147,14 @@ SMD_k
 {\sqrt{((s^R_k)^2+(s^C_k)^2)/2}}
 \]
 
-均值和方差均按上述权重计算。分母为0且均值相同则 SMD=0；分母为0且均值不同则 \(|SMD|=\infty\)。
+每组权重先归一化为和1。唯一方差口径为 population weighted variance：
+
+\[
+\mu_g=\sum_i w_{g,i}x_{g,i},\qquad
+s_g^2=\sum_i w_{g,i}(x_{g,i}-\mu_g)^2
+\]
+
+不使用无偏或有效样本量修正。分母为0且均值相同则 SMD=0；分母为0且均值不同则 \(|SMD|=\infty\)。
 
 类别 balance features 为每个实际出现的“申万一级行业”与“交易板块”独立 dummy。对类别 a：
 
@@ -1389,6 +1400,12 @@ Pctl_{null}(Persist)
 
 **并列处理：** Persist 为 {0,1,2,3} 离散变量，null 池必然大量并列，一律按 §6.7 midrank 处理；不得对 Persist 做不改变排序的缩放来替代并列规则。
 
+**冻结成员缺失/停牌语义：**
+
+- \(K^E\) 成员当日停牌、ST、退市整理或无成交时保留角色但不进入 \(K^{trade}\)，其当日 `CCS_level=0`、`DirectedDemand=0`，在 \(GCC^\theta\) 与迁移变量中按零需求计入；
+- 正常交易但任一必需原始字段缺失属于数据故障，该题材日记 `NON_EVALUABLE(CAPACITY_FIELD_MISSING)`，不产生新信号；持仓退出仍可由已有 LAC/交易状态规则触发；
+- 不得删除冻结成员后重算中位数或分母，不得以前值填充 CCS。
+
 **合法用途：** 个股层级门槛、GCC 构造（§11）、状态机输入（经 GCC）、事件研究分组。
 
 ### 9.2.4 资格条件
@@ -1435,6 +1452,7 @@ CLV_{j,D}
 \]
 
 这不是资金净流入，只是"异常成交伴随正向价格承接"的日频代理。
+冻结角色成员当日停牌、ST、退市整理或无成交时，按 §9.2.3 定义 \(DirectedDemand=0\)。
 
 ## 10.2 需求份额
 
@@ -2395,7 +2413,7 @@ FAIL：
 
 ## Gate 4：角色迁移存在
 
-容量需求份额和容量广度在确认后相对匹配 null 出现独立、稳定的上升路径；\(\Delta StartRate_5\) 为共同主读数之一。按附录 B 三态裁决。
+容量需求份额与容量相对正向价格贡献在确认后相对匹配 null 上升；共同主 estimand 为 \(\Delta StartRate_5,\Delta CDS_5,\Delta PriceShare_5\)。CapacityBreadth 路径为强制诊断，不进入正式 Gate 4 IUT。按附录 B 三态裁决。
 
 FAIL：
 
@@ -2464,13 +2482,15 @@ FAIL：
 - 定义 \(\theta_{ADV}=NetAlpha20_{rejected}-NetAlpha20_{filled}\)，非劣界为1个百分点；
 - guard PASS：\(\theta_{ADV}\) 的单侧95%上界 < 0.01；
 - guard FAIL：\(\theta_{ADV}\) 的单侧95%下界 > 0.01，记 `FAIL_ADVERSE_SELECTION`；
-- 其余记 `INCONCLUSIVE_ADVERSE_SELECTION`，REJECT_GAP 不得进入生产（保守禁用），Gate 8 可继续以“无 REJECT_GAP”规则重新形成预注册生产候选；
+- 其余记 `INCONCLUSIVE_ADVERSE_SELECTION`，Gate 8 整体为 INCONCLUSIVE；本 SPEC 不允许在同一 HOLDOUT 切换到“无 REJECT_GAP”后重新开庭。移除该规则必须创建新 SPEC 与新未触碰样本；
 - Gate 8 的两个共同主 estimand 为执行 NetAlpha20 与 \(-\theta_{ADV}\)，按 §18.0 IUT 合成；
 - 该对照在 VALIDATION 与 HOLDOUT 各报告一次。
 
 FAIL：
 
     FAIL_EXECUTION
+
+Gate 8 唯一失败码优先级：若逆向选择 guard FAIL，输出 `FAIL_ADVERSE_SELECTION`；否则若执行 NetAlpha20 FAIL，输出 `FAIL_EXECUTION`。任一共同主 estimand INCONCLUSIVE 且无 FAIL 证据时，Gate 8 为 INCONCLUSIVE。
 
 ## Gate 9：退出增量
 
@@ -2578,6 +2598,8 @@ FalseSignalRate(\{D\})\times RealEvaluableThemes_D
 \]
 
 其中 `RealEvaluableThemes_D` 为 D 日通过 §8.3 可行性和平衡闸门的真实题材数。板块分层按题材成员数最多的交易板块（并列取板块代码升序），规模层按 VALIDATION 冻结的成员数 tertile。
+
+年度聚合时，分母为0的日期从求和中跳过但计入缺失覆盖率；若有有效 P10 分母的交易日少于该年度市场交易日的90%，该年度记 `P10_INSUFFICIENT_YEAR`，不得报告 AnnualFalseEpisodes、不得用于 Phase-I 或漂移判读。覆盖率≥90%时按上式对有效日求和，并同时报告缺失日数；缺失日不得按0贡献处理。
 
 Phase-I 99% 预测上界：在 VALIDATION 日级 `(fake_count,evaluable_count)` 上按自然月做10,000次有放回 block bootstrap；每次计算全部连续28交易日 pooled ratio 的最大值，取这些最大值的99%分位。总体与每个分层（累计 evaluable≥500）分别冻结；FORWARD 任一有效层超过其上界即 `NULL_RATE_DRIFT`。
 
@@ -3224,6 +3246,7 @@ episode 数与墙上时间必须同时满足，不采用“任一先到”规则
 |NG06/07 分层验收题材日|100|题材日|工程|200|
 |NG07 信号率差/分位相关|≤1pp / ≥0.99|—|精度闸门|更严格仅报告|
 |P10 Phase-I bootstrap/分层最小分母|10,000 / 500|次 / control观测|工程|—|
+|P10 年度有效日覆盖率|90|%交易日|工程闸门|95%报告|
 |计算 SLO p95/p99|60 / 90|分钟|运行治理|—|
 |计算截止/超时隔离比例|21:00 / 10%|时间 / 题材|运行治理|—|
 |IES / IDS 阈值|0.80 / 0.80|null分位|先验|0.75 / 0.85|
