@@ -50,6 +50,10 @@ v8/v9 已 CLOSED 项（连通分量排除、open episode 日更、DISC_NULL、ME
 | 10 | §20.5 公式 + 终局：Gate9 PASS 且动态 guardrail FAIL → PASS_ENTRY_ONLY | §20.5、§22 |
 | 附 | 并簇超限=禁止新买不强制减仓；H-CLOCK 主估 level 交互 + slope guardrail；bootstrap 按 ID1 整块抽 | §15、§2、§17.4、§20.2 |
 
-## 四、结论
+## 四、审计残留
+
+独立复审确认主清单 CLOSED；已修 P10 年度计数残留“按日求和”措辞、`UnsettledShares`→`UnsettledBuyShares`、Gate6 账本标题。
+
+## 五、结论
 
 全部所列 A/B 指控成立。v10 只做执行–测量闭包，不新增题材指标/Gate。Freeze 仍取决于附录 C 物化。
