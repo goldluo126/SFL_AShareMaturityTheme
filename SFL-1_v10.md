@@ -2368,7 +2368,7 @@ FreeCash_t = Cash_t - ReservedCash_t \ge 0
 |action_type|账本效果|
 |---|---|
 |CASH_DIVIDEND|除息日：`Cash += SettledShares × 税后每股现金`；成本基础按制度规则调整或不调整（按 `tax_rule_version` 冻结表）；未结算股不分红|
-|STOCK_DIVIDEND / TRANSFER|除权日：`SettledShares`、`UnsettledShares` 按 `stock_ratio` 增加；成本基础每股下调使总成本不变|
+|STOCK_DIVIDEND / TRANSFER|除权日：`SettledShares`、`UnsettledBuyShares` 按 `stock_ratio` 增加；成本基础每股下调使总成本不变|
 |SPLIT / REVERSE_SPLIT|生效日：股数 × `split_ratio`；成本基础按倒数调整|
 |RIGHTS_ISSUE|若行权：扣现金、增股份（按公告）；不行权则仅登记，不改变股数|
 |CODE_CHANGE / ABSORPTION|映射至 `successor_security_id`；持仓与成本整体迁移|
@@ -2822,7 +2822,7 @@ FAIL：
 
 不满足者登记 `OUT_OF_SUPPORT_G6`，不进入正式判词。仅 \(|K^{trade}|\ge4\) 但 Eligible<2 不得外推。
 
-**四臂统一机制口径假想账本（v9 资本规则）：**
+**四臂统一净执行假想账本（v10 资本规则）：**
 
 - 每臂总资本 = Eligible 中 EntryScore 前 2 的理论 TargetValue 之和（两只均按 §15.1 在隔离研究 NAV 上计算；不依赖“真实只成交1只”的特判）；四臂总资本相同；
 - 臂内成员等权拆分人民币；未成交部分为现金、期内收益 0；
@@ -3057,7 +3057,7 @@ AnnualFalseEpisodes_y
 
 按**唯一伪 episode**计数，禁止把每日 recipient 隐含当成新 episode。板块/规模分层规则同前（按 spawn 日真实题材属性）。
 
-年度聚合时，分母为0的日期从求和中跳过但计入缺失覆盖率；若有有效 P10 分母的交易日少于该年度市场交易日的90%，该年度记 `P10_INSUFFICIENT_YEAR`，不得报告 AnnualFalseEpisodes、不得用于 Phase-I 或漂移判读。覆盖率≥90%时按上式对有效日求和，并同时报告缺失日数；缺失日不得按0贡献处理。
+年度覆盖：若某年 `discovered_at∈y` 的可评估伪 episode 数 < 该年真实可评估题材日数的对应下限（或有效评估日覆盖 < 该年交易日90%），记 `P10_INSUFFICIENT_YEAR`，不得报告 AnnualFalseEpisodes、不得用于 Phase-I 或漂移。覆盖达标时按唯一伪 episode 计数，并报告未覆盖日数；禁止把每日 `(c,D)` 当成新 episode 求和。
 
 Phase-I 99% 预测上界：在 VALIDATION 日级 `(fake_count,evaluable_count)` 上按自然月做10,000次有放回 block bootstrap；每次计算全部连续28交易日 pooled ratio 的最大值，取这些最大值的99%分位。总体与每个分层（累计 evaluable≥500）分别冻结；FORWARD 任一有效层超过其上界即 `NULL_RATE_DRIFT`。
 
