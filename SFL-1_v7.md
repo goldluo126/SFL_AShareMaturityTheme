@@ -41,7 +41,7 @@
 
 ## 0.2 A股题材行情的可检验主命题
 
-> 在一个于D日前已经被定义的候选题材集合中，少数高显著性股票首先完成注意力点火；如果剔除这些股票和待买股票后，其他成员仍出现独立扩散，并且边际需求开始由低容量注意力载体向高容量核心载体迁移，而容量核心尚未完成主要价格扩张，则在按 §14.2 执行规则于信号有效期内可成交的条件下，D+1（或有效期内重试日）买入容量核心可能获得扣除真实成本后的条件超额收益。
+> 在一个于D日前已经被定义的候选题材集合中，少数高显著性股票首先完成注意力点火；如果剔除这些股票和待买股票后，其他成员仍出现独立扩散，并且边际需求开始由低容量注意力载体向高容量核心载体迁移，而容量核心尚未完成主要价格扩张，则在按 §14.1 执行规则于信号有效期内可成交的条件下，D+1（或有效期内重试日）买入容量核心可能获得扣除真实成本后的条件超额收益。
 
 形式化为：
 
@@ -729,7 +729,7 @@ MinPositionValue
 OrderValue_i \le 0.5\%\times ADV20_{i,D}
 \]
 
-**执行侧参与约束（D+1 实时，见 §14.2）：** 每分钟成交量的 5% 参与率在执行过程中实时限制成交数量。**D+1 成交量只能影响实际成交结果，禁止反向进入 D 日任何资格、角色、状态或信号判定**（v6 将 D+1 早盘成交额写入 D 日容量约束，构成未来信息，已废止）。
+**执行侧参与约束（D+1 实时，见 §14.1）：** 每分钟成交量的 5% 参与率在执行过程中实时限制成交数量。**D+1 成交量只能影响实际成交结果，禁止反向进入 D 日任何资格、角色、状态或信号判定**（v6 将 D+1 早盘成交额写入 D 日容量约束，构成未来信息，已废止）。
 
 研究阶段按标准化1000万元组合计算，并同时报告容量曲线。
 
@@ -932,7 +932,7 @@ Pctl(x;S)
 - \(Pctl_{null}\)（匹配伪题材 null 分位，§8.4、§8.5、§9.2.3）；
 - \(Pctl_{cross}\)（同日跨题材分位，§13.2）；
 - 个股历史分位（250日、§9.3）与板块内当日分位（§6.4）；
-- REJECT_GAP 的经验分位 Q0.85（§14.2：\(Q_{0.85}\) 取满足 \(Pctl(g;S)\ge 0.85\) 的最小样本值）。
+- REJECT_GAP 的经验分位 Q0.85（§14.1：\(Q_{0.85}\) 取满足 \(Pctl(g;S)\ge 0.85\) 的最小样本值）。
 
 **离散变量并列处理：** Persist∈{0,1,2,3} 等离散变量直接按上式 midrank 处理并列，**不做任何缩放**。单调正变换不改变经验分位，因此不得以缩放替代并列规则。
 
@@ -1923,7 +1923,7 @@ Lag_M=\tau_{migration}-\tau_{confirm}
 |CLOSE_ALL_LEGS|全部持仓经个股腿（Leg I/B2 等）退出、无剩余持仓且无有效信号|最后平仓完成次日|
 |CLOSE_NO_ROLE_COHORT|\(\tau_{confirm}\) 日 \(|K^E|<3\)（NO_ROLE_COHORT）|\(\tau_{confirm}\) 次日|
 |CLOSE_ENTRY_TIMEOUT|自 \(\tau_{confirm}\) 起连续 15 个交易日未进入 {EARLY_CAPACITY, HEALTHY_TRANSFER}|第 15 日次日|
-|CLOSE_SIGNALS_VOID|主信号窗已开且全部信号作废（含有效期耗尽），且无任何成交、无持仓|最后一个信号作废次日|
+|CLOSE_SIGNALS_VOID|主信号窗已开，且（主信号日未产生任何信号）或（全部信号作废，含有效期耗尽），且无任何成交、无持仓|有信号：最后一个信号作废次日；零信号：主信号日次日|
 
 规则：
 
@@ -2216,7 +2216,7 @@ FreeCash_t = Cash_t - ReservedCash_t \ge 0
 
     从实际成交日 τ_entry 起固定持有20个交易日
     第20个持有交易日收盘产生退出信号
-    下一交易日14:30—15:00 VWAP执行
+    下一交易日14:30—15:00 按 §14.3 流式参与执行
 
 同时报告5、10、40、60日结果，但20日是唯一主终点。所有期限均从 \(\tau_{entry}\) 对齐。
 
@@ -2415,7 +2415,7 @@ Mean_{i\in L^E_e}(FutureCapacity_i)
 ### 判读
 
 - Gate 3 PASS：两个 estimand 的单侧95% CI下界均 > 0.05，复合 p 值按 §18.0 IUT 定义；
-- Gate 3 FAIL：任一 estimand 的 Bonferroni 单侧97.5%上界 < 0；
+- Gate 3 FAIL：任一 estimand 的 Bonferroni 单侧 \(1-0.05/(9\cdot m)\)（m=2，即 1−0.05/18）上界 < 0；
 - 其余为 INCONCLUSIVE；
 - P5 角色随机化后两个 contrast 应回到0附近；
 - 至少60%的自然年度两个 contrast 同时为正，否则即使统计 PASS 也降级为 INCONCLUSIVE；
@@ -2691,7 +2691,7 @@ FAIL：
 
 - 定义 \(\theta_{ADV}=NetAlpha20_{rejected}-NetAlpha20_{filled}\)，非劣界为1个百分点；
 - guard PASS：\(\theta_{ADV}\) 的单侧 \(1-\alpha_v\) 置信上界 < 0.01；
-- guard FAIL：\(\theta_{ADV}\) 的 Bonferroni 单侧97.5%下界 > 0.01，记 `FAIL_ADVERSE_SELECTION`；
+- guard FAIL：\(\theta_{ADV}\) 的 Bonferroni 单侧 \(1-0.05/(9\cdot m)\)（m=2，即 1−0.05/18）下界 > 0.01，记 `FAIL_ADVERSE_SELECTION`；
 - 其余记 `INCONCLUSIVE_ADVERSE_SELECTION`，Gate 8 整体为 INCONCLUSIVE；本 SPEC 不允许在同一 HOLDOUT 切换到“无 REJECT_GAP”后重新开庭。移除该规则必须创建新 SPEC 与新未触碰样本；
 - Gate 8 的两个共同主 estimand 为执行 NetAlpha20 与 \(-\theta_{ADV}\)，按 §18.0 IUT 合成；
 - 该对照在 VALIDATION 与 HOLDOUT 各报告一次。
@@ -2710,7 +2710,7 @@ Gate 8 唯一失败码优先级：若逆向选择 guard FAIL，输出 `FAIL_ADVE
 
 1. 构造两条**完整配对组合 NAV 日收益序列**（同入场、同账本规则、仅退出腿不同）；
 2. \(Sharpe = \sqrt{250}\times Mean(r^{exc}_t)/Std(r^{exc}_t)\)，\(r^{exc}_t\) 为对暴露匹配基准（§0.3.3）的日超额，Std 为样本标准差（ddof=1）；
-3. 两个共同主 estimand：\(\Delta Sharpe\)（动态−固定）与 \(\Delta CumExcess\)（累计净超额差）；
+3. 两个共同主 estimand：\(\Delta Sharpe\)（动态−固定，MES_pass=0.10）与 \(\Delta CumExcess\)（累计净超额差，MES_pass=0.02）；MES_fail 均为 0；
 4. CI 与 p 值：对两条日收益序列做**同步 21 交易日 circular block bootstrap**（同一重采样索引同时作用于两政策，保留配对结构与序列相关），10,000 次（Monte Carlo 闸门按 §20.2 可升 50,000）；
 5. 题材簇×月双向聚类不适用于组合时间序列量，仅用于 Gate 9 的 episode 层诊断读数。
 
@@ -2761,7 +2761,7 @@ Gate 8 唯一失败码优先级：若逆向选择 guard FAIL，输出 `FAIL_ADVE
 
 ## P5：角色随机化
 
-在每个题材的 \(L^E\cup K^E\) 内保持 \(|L^E|\) 与 \(|K^E|\) 不变，使用 §8.3 seed 规则进行5,000次无放回标签置换；每次重算 \(\theta^{ROLE}_A,\theta^{ROLE}_C\)。真实双 contrast 必须优于随机标签，用于 Gate 3 的匹配集合内随机化检验。不得以角色构造资格重新筛选置换标签。
+在每个题材的 \(L^E\cup K^E\) 内保持 \(|L^E|\) 与 \(|K^E|\) 不变，以 \(Seed=Hash(spec\_version,"P5",theme\_id,\tau_{confirm},perm\_index)\)（§6.9 协议，perm_index=1..5000，与 EPISODE_NULL payload 不重叠）进行5,000次无放回标签置换；每次重算 \(\theta^{ROLE}_A,\theta^{ROLE}_C\)。真实双 contrast 必须优于随机标签，用于 Gate 3 的匹配集合内随机化检验。不得以角色构造资格重新筛选置换标签。
 
 ## P6：供应商交叉
 
@@ -2865,7 +2865,7 @@ episode 层基准为匹配伪题材容量篮子同构执行，组合层基准为
 
 ## 20.2 主推断装置与依赖结构
 
-**正式主装置：** 题材簇 × 自然月双向聚类稳健标准误，由其生成 Gate 主效果 CI 与 p 值。原因：同时覆盖同簇重复题材与同月市场共同冲击。
+**正式主装置：** 题材簇 × 自然月双向聚类稳健标准误，由其生成 Gate 主效果 CI 与 p 值（Gate 9 与 Gate S 使用 §18 声明的组合级 bootstrap 装置，属显式例外）。原因：同时覆盖同簇重复题材与同月市场共同冲击。
 
 **强制稳健性：**
 
@@ -3365,7 +3365,7 @@ episode 数与墙上时间必须同时满足，不采用“任一先到”规则
         enforce_compute_slo_or_quarantine(D)
         run_drift_checks()
 
-    fills = execute_vwap(orders)
+    fills = execute_streaming_participation(orders)   # §14.1/§14.3
     update_reservations_and_positions(fills)
     assert_ledger_identities()
     verdict = three_state_gate_evaluation()
@@ -3537,6 +3537,9 @@ episode 数与墙上时间必须同时满足，不采用“任一先到”规则
 |g 定义窗口|09:30–09:34 VWAP|分钟线|定义|开盘价仅备援|
 |开窗超时关闭|15|交易日|先验|10 / 20|
 |Gate 5 β3 MES|0.005|1σ×1σ 20日毛超额|经济先验|0.003 / 0.01|
+|Gate 1/2 MES_pass|0.05 / 0.10|AUC差 / 率差|经济先验|减半/加倍报告|
+|Gate 6/7/8 MES_pass|0.01 / 0.01 / 0.01|20日收益差|经济先验|减半/加倍报告|
+|Gate 9 MES_pass（ΔSharpe/ΔCumExcess）|0.10 / 0.02|年化Sharpe / 收益差|经济先验|减半/加倍报告|
 |Gate 6 近邻池/臂内只数|5 / 2|只|工程|—|
 |Gate 2/7 匹配卡尺|VALIDATION 配对距离90%分位|马氏|工程|85% / 95%|
 |Gate 9 block bootstrap|21日 / 10,000次|块 / 次|推断|—|
@@ -3664,7 +3667,7 @@ Canonical 静态检查必须证明：
 |6 选择|同题材同日 \(K^{trade}\ge2\)（episode 等权）|EntryScore前2 − MatchedRandom（§18 Gate 6 生成器）机制口径 Alpha20|≤0|1% / 0|题材簇×月|固定顺序第6，α=α_v|仅Gate1–5 PASS后；HOLDOUT一次|§18.0；不足→INCONCLUSIVE|
 |7 交互|处理-控制配对（§17.1 生成器；配对等权）|\(\Delta_{INT}\)|≤0|1% / 0|题材簇×月|固定顺序第7，α=α_v|仅Gate1–6 PASS后；HOLDOUT一次|§18.0；不足→INCONCLUSIVE|
 |8 执行|有效期内实际成交信号|NetAlpha20 与 \(-\theta_{ADV}\)|任一不达标|0.01/−0.01；fail 0/−0.01|题材簇×月|固定顺序第8；m=2 IUT|仅Gate1–7 PASS后；HOLDOUT一次|两者均PASS才PASS；逆向选择按 §18 Gate 8；其余INCONCLUSIVE|
-|9 退出|同一入场成交序列的配对组合 NAV|动态−固定 Sharpe差、累计净超额差|任一≤0|0.10/0；fail均0|同步21日 circular block bootstrap（§18 Gate 9）|固定顺序第9；m=2 IUT|仅Gate1–8 PASS后；HOLDOUT一次|两者均PASS才PASS；任一FAIL才FAIL；其余INCONCLUSIVE|
+|9 退出|同一入场成交序列的配对组合 NAV|动态−固定 Sharpe差、累计净超额差|任一≤0|ΔSharpe 0.10、ΔCumExcess 0.02；fail均0|同步21日 circular block bootstrap（§18 Gate 9）|固定顺序第9；m=2 IUT|仅Gate1–8 PASS后；HOLDOUT一次|两者均PASS才PASS；任一FAIL才FAIL；其余INCONCLUSIVE|
 |S 叠加|同一入口/退出序列|叠加−无叠加的Sharpe差|≤0|0.10 / 0|月块|独立 Gate S 家族 Holm FWER α_v|HOLDOUT一次；FORWARD仅Kill|按 §18.0；FAIL/INCONCLUSIVE 均不进入生产|
 
 **MES 说明：** 以上为预注册工程/经济最小效应，不是市场自然常数。修改即新版本。复合 Gate 使用 §18.0 IUT，核心9 Gate 使用固定顺序 gatekeeping（每 Gate α=α_v，v7 为 0.025）；Gate S 才使用 Holm。所有效果量输出双侧95% CI，并输出正式单侧 \(1-\alpha_v\) 下界与反向 false-death 预算下的 Bonferroni 同时上界（\(1-0.05/(9m)\)）。
