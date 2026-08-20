@@ -622,7 +622,13 @@ OpportunityTailLoss=-\mathbb E[V_{net}\mid V_{net}\le Q^{V}_{0.10}]>0
 
 4. 另建只用于定仓的 `M_RISK`：在 \(\pi_0\) 有成交样本上预测**条件于成交的持仓净收益**相同下尾网格，得到 `HoldingTailLoss`。它不参与Alpha证明；样本不足时按 §13.2 回退到OOS历史持仓损失。
 
-若条件均值非负，两个 TailLoss 均取 P-39 的下限。`OpportunityTailLoss` 只用于机会排序，`HoldingTailLoss` 只用于已成交头寸定仓，二者不得混用。
+两个模型都增加固定端点 \(Q(0)=-1\)，预测分位先裁剪到 \([-1,1]\)，再按 §6.3 的PAVA规则单调投影。尾损用唯一积分：
+
+\[
+TailLoss=-\frac{1}{0.10}\int_0^{0.10}Q(p)dp
+\]
+
+积分在 `{0,0.01,0.025,0.05,0.10}` 上分段线性并用梯形公式精确计算。若结果非正，取 P-39 下限。`OpportunityTailLoss` 只用于机会排序，`HoldingTailLoss` 只用于已成交头寸定仓，二者不得混用。
 
 模型选择目标是在验证集最大化“扣费后每次机会期望”，但必须满足 §15 风险约束。不得仅以准确率或胜率选模型。
 
@@ -642,7 +648,7 @@ p_{joint,i}=\frac{1+\#\{d:D_d\ge A_i\}}{1+N_{trainDays}}
 4. 预测基准调整机会价值 \(\hat V_{alpha}\ge P-08\)；
 5. 预测机会价值10%分位 \(Q^V_{0.10}\ge P-09\)；
 6. \(P(V_{net}>0)\ge P-10\)，且预测成交概率不低于 P-40；
-7. M_E、M_S、M_A 的 manifest 状态为 `APPROVED`、训练日距当前不超过31个自然日，且没有任何未解除 Gate；
+7. 验证阶段 M_E、M_S、M_A 的 manifest 状态至少为 `VALIDATION_ELIGIBLE`；生产阶段必须为 `APPROVED`；训练日距当前不超过31个自然日，且没有该阶段已要求通过但尚未解除的 Gate；
 8. §11 成交门和 §13 风险门通过。
 
 阈值只能通过嵌套 walk-forward 在训练/验证集确定，并在测试段和实盘版本中冻结。
@@ -658,6 +664,16 @@ A1：Araw + Surprise向量
 ```
 
 完整策略相对 A0 的 OOS `V_net` 与 `V_alpha` 增量必须同时满足：聚类/块自助95%置信下界大于0，且至少 P-41 的外层折同号。Araw 与 A1 的差异单独报告；由于 Surprise 是现实值与预测分布的确定性变换，不把 A1 对 Araw 的改善夸大为新增信息。若完整策略不优于 A0，则降级为普通早盘动量，不得继续使用 L4-EG 名称。
+
+A0/Araw/A1 必须形成三个独立的完整交易 policy：
+
+1. 三者分别训练自己的均值、概率、分位和排序模型；
+2. A1按§8.4产生当日 K 个候选；A0和Araw不使用 `p_joint`，各自在自己的全候选预测中通过§8.4第3–8项后按自己的 RankScore 选前 K 个，不足K则持有现金；
+3. 三者使用相同初始NAV、仓位上限、成交规则和退出规则；
+4. 在三份相同的原始订单流副本上分别做完整跨日联合重放，彼此不共享成交；
+5. 不允许在 A1 已选股票子样本上被动评价 A0/Araw。
+
+这既匹配每日机会预算，又避免使用 A1 事后选出的股票高估增量。
 
 ---
 
@@ -688,7 +704,7 @@ A1：Araw + Surprise向量
 
 每个边界按每条记录从特征起点到**实际退出成交日**的标签区间 purge；连续跌停导致的延长持有同样纳入。验证后可用训练+验证重拟合，但超参数必须是在该验证段冻结的值。
 
-final holdout 模拟真实月度部署：进入 holdout 前冻结全部协议和阈值；holdout 内每月首个交易日前可用此前已成熟标签（包括holdout早期记录）重训，但只能使用 §9.4 的既定选择规则，不能修改特征、阈值、模型族或查看未来月份。G2–G5 必须在 final holdout 单独通过，且至少有 P-47 个通过§8.4的机会和 P-48 笔实际成交；不足即判 `INSUFFICIENT_FINAL_SAMPLE`，不得上线。G6 使用全部 sequential OOS 加 final holdout，G7同时在 final holdout 和合并OOS上通过。
+final holdout 模拟真实月度部署：进入 holdout 前冻结全部协议和阈值；holdout 内每月首个交易日前可用此前已成熟标签（包括holdout早期记录）重训，但只能使用 §9.4 的既定选择规则，不能修改特征、阈值、模型族或查看未来月份。G2、G3、G5及G4的聚合增量95%下界必须在 final holdout 单独通过；G4的 P-41“外层折同号比例”只在开发期 sequential OOS 折上计算。final holdout 至少有 P-47 个通过§8.4的机会和 P-48 笔实际成交；不足即判 `INSUFFICIENT_FINAL_SAMPLE`，不得上线。G6 使用全部 sequential OOS 加 final holdout，G7同时在 final holdout 和合并OOS上通过。
 
 ### §9.3 时间序列 OOF 与模型链隔离
 
@@ -719,10 +735,18 @@ Quantile L2 alpha={1e-4,1e-3,1e-2,1e-1}
 - M_E 连续模型：验证集平均 pinball loss；
 - M_E 二值模型及其校准器：验证集 Brier score，再以 ECE 破同分；
 - M_E Beta-Binomial：验证集负对数似然；
-- M_A：先最大化验证集平均 `V_alpha`，再最大化 `V_net`；
+- M_A：先最小化验证集 `V_alpha` 的均方误差，再最小化 `V_net` 的均方误差；
 - M_RISK：验证集下尾 pinball loss。
 
-所有指标越小越优，唯 `V_alpha/V_net` 越大越优；绝对差小于1e-8时选择非零系数更少的模型，再并列取参数数值较小者。校准器只允许 isotonic 与 Platt 两种并在 Brier score 上选择。题材字典、特征、退出、阈值和全部尝试在读取 final holdout 前写入只追加研究注册表。final holdout 只运行一次。
+所有指标越小越优；绝对差小于1e-8时选择非零系数更少的模型，再并列取参数数值较小者。校准器只允许 isotonic 与 Platt 两种并在 Brier score 上选择。模型选择只用预测损失，不用同一验证段的策略收益反复挑模型；policy经济性由后续G4/G5独立检验。题材字典、特征、退出、阈值和全部尝试在读取 final holdout 前写入只追加研究注册表。final holdout 只运行一次。
+
+模型 manifest 状态流转：
+
+```text
+TRAINED → VALIDATION_ELIGIBLE → APPROVED → DEGRADED/HALT → RETIRED
+```
+
+通过内部训练/验证且工件完整即可进入 `VALIDATION_ELIGIBLE` 并用于 sequential OOS/final holdout；只有G0–G8全部通过才可 `APPROVED` 并进入Canary，避免审批循环。
 
 ### §9.5 模型工件
 
@@ -810,17 +834,19 @@ OrderValue \le P_{16}\times AskDepth_{5}
 
 并满足：
 
-- 预计单边滑点不超过 P-17；
+- 预计单边滑点按当前五档卖盘从最优价起依次扫到目标股数，得到数量加权预计成交价；其相对当前中间价的不利偏离不超过 P-17，五档不足目标股数则拒单；
 - 买一卖一价差不超过 P-18；
 - 非涨停无卖盘状态；
 - 最新盘口年龄不超过2秒；
-- 预计成交后单股风险不超过 §13 上限。
+- 生产/组合回测中，预计成交后单股风险不超过 §13 上限；训练行为策略 \(\pi_0\) 明确跳过本条组合风险门。
+
+§13定仓公式中的 `Price` 唯一取§11.1计算出的买入限价 `limit_price`，不使用中间价或事后成交价。
 
 ### §11.3 历史成交仿真
 
 历史回测使用订单级 L2 逐笔重放：
 
-1. 按实盘测得的“策略计算→网络→柜台→交易所”延迟，将模拟订单注入订单流；缺乏实盘样本时采用 P-46 压力延迟；
+1. 每月冻结一次延迟：取截至月末最近 P-50 笔有效实盘订单“本地发送→交易所确认”的经验 P-51 分位毫秒数；不足 P-50 笔时取 P-46。下月所有历史重放订单统一使用该冻结值，不按事后单票匹配；
 2. 买单限价达到卖一时，立即按价格优先、时间优先消耗所有价格≤限价的历史卖单；卖单对所有价格≥限价的历史买单对称处理；
 3. 主动成交后的剩余数量才进入自身方向限价队列，并排在该价格当时队尾；
 4. 维护一份 counterfactual shadow book：策略主动消耗的历史订单数量从 shadow book 扣除，之后该历史订单对应的成交/撤单只作用于尚未消耗的剩余数量；不得让同一历史订单被使用两次；
@@ -1013,7 +1039,7 @@ Shares=
 | G1 PIT | 随机抽查至少100个字段 | 无未来数据，时间戳链完整 |
 | G2 M_E | 公共预期估计器样本外质量 | 通过 §6.4 全部条件 |
 | G3 M_S | Surprise 校准 | 通过 §7.4 全部条件 |
-| G4 增量Alpha | 完整策略对 A0 | `V_net`和`V_alpha`增量的95%下界均>0；至少P-41外层折同号 |
+| G4 增量Alpha | 完整策略对 A0 | sequential OOS至少P-41外层折同号；sequential OOS聚合及final holdout各自的`V_net`、`V_alpha`增量95%下界均>0 |
 | G5 可成交净收益 | 订单级联合重放、全成本 | 每机会`V_net`、`V_alpha`、组合日净收益、组合日基准调整收益均值的95%下界全部>0 |
 | G6 稳定性 | 分年度/状态/板块 | 最大单年正P&L贡献率≤P-43；最大单簇正P&L贡献率≤P-44；至少4个自然年度有样本 |
 | G7 尾部与容量 | 压力成本、跌停、参与率 | 目标资金不超过验证容量1/3，风险预算内 |
@@ -1081,6 +1107,8 @@ G6贡献率定义为：某分组正P&L除以所有正P&L分组之和；负P&L分
 | P-47 | final holdout最小合格机会 | 60 | 最终样本门 |
 | P-48 | final holdout最小实际成交 | 30 | 最终成交样本门 |
 | P-49 | 单笔NAV风险预算 | 0.15% | 条件持仓尾损定仓 |
+| P-50 | 延迟估计最小实盘订单 | 100笔 | 不足则用压力延迟 |
+| P-51 | 冻结延迟经验分位 | 95%分位 | 下月订单重放延迟 |
 
 参数状态：
 
@@ -1194,6 +1222,7 @@ PRIOR → CALIBRATED → FROZEN → RETIRED
 config/
   parameters_v2.yaml
   fee_schedule.csv
+  benchmark_map.csv
   feature_schema.yaml
   topic_dictionary_<version>.csv
 data_manifest/
@@ -1201,6 +1230,7 @@ data_manifest/
 models/
   ME_<id>/
   MA_<id>/
+  MRISK_<id>/
 reports/
   walk_forward_<run_id>.html
   fills_<run_id>.parquet
